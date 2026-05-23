@@ -1,6 +1,7 @@
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
+from typing import Literal
 
 import asyncpg
 from dotenv import load_dotenv
@@ -41,6 +42,67 @@ class ObstacleRead(BaseModel):
     obstacle_type: str
     description: str | None
     created_at: datetime
+
+
+class RouteRequest(BaseModel):
+    lat1: float = Field(ge=-90, le=90)
+    lon1: float = Field(ge=-180, le=180)
+    lat2: float = Field(ge=-90, le=90)
+    lon2: float = Field(ge=-180, le=180)
+    profile: str = Field(min_length=1, max_length=50)
+
+    @field_validator("lon1")
+    @classmethod
+    def validate_start_bbox(cls, lon: float, info):
+        lat = info.data.get("lat1")
+        if lat is not None:
+            validate_bellingham(lat, lon)
+        return lon
+    
+    @field_validator("lon2")
+    @classmethod
+    def validate_end_bbox(cls, lon: float, info):
+        lat = info.data.get("lat2")
+        if lat is not None:
+            validate_bellingham(lat, lon)
+        return lon
+
+
+class UnweaverEnvelope(BaseModel):
+    status: str
+    code: str | None = None
+
+
+class UnweaverLineString(BaseModel):
+    type: Literal["LineString"]
+    coordinates: list[tuple[float, float]]
+
+
+class UnweaverEdge(BaseModel):
+    geometry: UnweaverLineString
+    properties: dict = Field(default_factory=dict)
+
+
+class UnweaverSuccess(BaseModel):
+    status: str
+    edges: list[UnweaverEdge]
+
+
+class RouteSegment(BaseModel):
+    coordinates: list[tuple[float, float]]
+
+
+class RouteObstacle(BaseModel):
+    id: int
+    lat: float
+    lon: float
+    obstacle_type: str
+    description: str | None
+
+
+class RouteResponse(BaseModel):
+    segments: list[RouteSegment]
+    obstacles: list[RouteObstacle]
 
 
 @asynccontextmanager
