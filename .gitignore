@@ -1,5 +1,11 @@
 # secrets
 .env
 
+# python
+.venv/
+
 # macOS
 .DS_Store
+
+# context
+AICHAIR-CONTEXT.md
