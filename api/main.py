@@ -1,17 +1,23 @@
-import os
+""" Kai Ketcham, WWU CS, 2026 """
+
 from contextlib import asynccontextmanager
 from datetime import datetime
+import os
 from typing import Literal
 
 import asyncpg
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Request
-from pydantic import BaseModel, Field, field_validator
+from fastapi import Depends, FastAPI, HTTPException, Request
+import httpx
+from pydantic import BaseModel, Field, ValidationError, field_validator
+from urllib.parse import quote
 
 load_dotenv()
 
 
 BBOX = (48.68, -122.55, 48.82, -122.35)
+UNWEAVER_BASE_URL = os.getenv("UNWEAVER_URL", "http://localhost:8000")
+OBSTACLE_BUFFER_METERS = 25
 
 
 def validate_bellingham(lat: float, lon: float) -> None:
@@ -75,7 +81,7 @@ class UnweaverEnvelope(BaseModel):
 
 class UnweaverLineString(BaseModel):
     type: Literal["LineString"]
-    coordinates: list[tuple[float, float]]
+    coordinates: list[tuple[float, float]] = Field(min_length=2)
 
 
 class UnweaverEdge(BaseModel):
@@ -105,6 +111,14 @@ class RouteResponse(BaseModel):
     obstacles: list[RouteObstacle]
 
 
+def edges_to_multilinestring_wkt(edges: list[UnweaverEdge]) -> str:
+    parts = []
+    for edge in edges:
+        coord_str = ", ".join(f"{lon} {lat}" for lon, lat in edge.geometry.coordinates)
+        parts.append(f"({coord_str})")
+    return f"MULTILINESTRING ({', '.join(parts)})"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.pool = await asyncpg.create_pool(
@@ -112,7 +126,12 @@ async def lifespan(app: FastAPI):
         min_size=1,
         max_size=5,
     )
+    app.state.http = httpx.AsyncClient(
+        base_url=UNWEAVER_BASE_URL,
+        timeout=5.0,
+    )
     yield
+    await app.state.http.aclose()
     await app.state.pool.close()
 
 
@@ -146,3 +165,83 @@ async def create_obstacle(
         obstacle.description,
     )
     return dict(row)
+
+
+async def get_http(request: Request) -> httpx.AsyncClient:
+    return request.app.state.http
+
+
+@app.post("/route", response_model=RouteResponse)
+async def get_route(
+    req: RouteRequest,
+    conn: asyncpg.Connection = Depends(get_db),
+    http: httpx.AsyncClient = Depends(get_http),
+):
+    profile = quote(req.profile, safe="")
+    params = {
+        "lon1": req.lon1,
+        "lat1": req.lat1,
+        "lon2": req.lon2,
+        "lat2": req.lat2,
+    }
+    try:
+        resp = await http.get(
+            f"/shortest_path/{profile}.json",
+            params=params,
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Routing service timed out")
+    except httpx.HTTPError:
+        raise HTTPException(status_code=502, detail="Routing service unavailable")
+    
+    if resp.status_code >= 400:
+        raise HTTPException(status_code=502, detail="Routing service returned an error")
+    
+    try:
+        payload = resp.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Routing service returned invalid JSON")
+
+    try:
+        envelope = UnweaverEnvelope.model_validate(payload)
+    except ValidationError:
+        raise HTTPException(status_code=502, detail="Routing service returned unexpected shape")
+
+    if envelope.status != "Ok":
+        code = envelope.code or envelope.status
+        if code == "NoPath":
+            raise HTTPException(status_code=404, detail="No route found between these points")
+        if code == "InvalidWaypoint":
+            raise HTTPException(status_code=422, detail="One or more coordinates can't be routed to")
+        if code == "NoGraph":
+            raise HTTPException(status_code=503, detail="Routing profile unavailable")
+        raise HTTPException(status_code=502, detail=f"Routing service returned unknown status: {code}")
+
+    try:
+        success = UnweaverSuccess.model_validate(payload)
+    except ValidationError:
+        raise HTTPException(status_code=502, detail="Routing service returned malformed success response")
+
+    if not success.edges:
+        return {"segments": [], "obstacles": []}
+
+    route_wkt = edges_to_multilinestring_wkt(success.edges)
+
+    obstacle_rows = await conn.fetch(
+        """
+        SELECT id, lat, lon, obstacle_type, description
+        FROM obstacles
+        WHERE ST_DWithin(
+          geom::geography,
+          ST_GeomFromText($1, 4326)::geography,
+          $2
+        )
+        """,
+        route_wkt,
+        OBSTACLE_BUFFER_METERS,
+    )
+
+    return {
+        "segments": [{"coordinates": edge.geometry.coordinates} for edge in success.edges],
+        "obstacles": [dict(row) for row in obstacle_rows],
+    }
