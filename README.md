@@ -47,8 +47,8 @@ Report an obstacle.
 {
   "lat": 48.75,
   "lon": -122.48,
-  "obstacle_type": "Pothole",
-  "description": "Deep, near curb cut"
+  "obstacle_type": "Obstacle",
+  "description": "Obstacle description"
 }
 ```
 
@@ -58,8 +58,8 @@ Report an obstacle.
   "id": 42,
   "lat": 48.75,
   "lon": -122.48,
-  "obstacle_type": "Pothole",
-  "description": "Deep, near curb cut",
+  "obstacle_type": "Obstacle",
+  "description": "Obstacle description",
   "created_at": "2026-05-23T19:42:00.123456+00:00"
 }
 ```
@@ -71,7 +71,7 @@ Report an obstacle.
 ```bash
 curl -X POST http://localhost:8001/obstacles \
   -H "Content-Type: application/json" \
-  -d '{"lat":48.75,"lon":-122.48,"obstacle_type":"Pothole","description":"Deep, near curb cut"}'
+  -d '{"lat":48.75,"lon":-122.48,"obstacle_type":"TEST","description":"TEST DESCRIPTION"}'
 ```
 
 ### POST /route
@@ -85,7 +85,7 @@ Compute a route between two points. Returns the route as line segments, plus any
   "lon1": -122.48,
   "lat2": 48.76,
   "lon2": -122.47,
-  "profile": "powered_wheelchair"
+  "profile": "wheelchair"
 }
 ```
 
@@ -101,8 +101,8 @@ Compute a route between two points. Returns the route as line segments, plus any
       "id": 42,
       "lat": 48.754,
       "lon": -122.476,
-      "obstacle_type": "Pothole",
-      "description": "Deep, near curb cut"
+      "obstacle_type": "Obstacle",
+      "description": "Obstacle description"
     }
   ]
 }
@@ -118,5 +118,5 @@ Compute a route between two points. Returns the route as line segments, plus any
 ```bash
 curl -X POST http://localhost:8001/route \
   -H "Content-Type: application/json" \
-  -d '{"lat1":48.75,"lon1":-122.48,"lat2":48.76,"lon2":-122.47,"profile":"powered_wheelchair"}'
+  -d '{"lat1":48.75,"lon1":-122.48,"lat2":48.76,"lon2":-122.47,"profile":"wheelchair"}'
 ```
